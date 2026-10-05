@@ -59,7 +59,55 @@ export const windowsNativeCapabilities = (
 };
 
 /** Whether every native control needed for Windows isolation is proven. */
-export const hasWindowsNativeAuthority = (platform: NodeJS.Platform): boolean =>
-  Object.values(windowsNativeCapabilities(platform)).every(
-    ({ available }) => available,
-  );
+export const hasWindowsNativeAuthority = (
+  platform: NodeJS.Platform,
+): boolean => {
+  if (platform !== "win32") {
+    return Object.values(windowsNativeCapabilities(platform)).every(
+      ({ available }) => available,
+    );
+  }
+  const verified = verifiedWindowsNativeCapabilities(platform);
+  return Object.values(verified).every(({ available }) => available);
+};
+
+/**
+ * Verified control set observed by the native authority helper, or the
+ * unproven stub when verification has not succeeded in this process.
+ */
+let verifiedCache:
+  | {
+      readonly platform: NodeJS.Platform;
+      readonly set: WindowsNativeCapabilitySet;
+    }
+  | undefined;
+
+/** Publish a helper-verified control set for this process's lifetime. */
+export const setVerifiedWindowsNativeAuthority = (
+  platform: NodeJS.Platform,
+  set: WindowsNativeCapabilitySet,
+): void => {
+  verifiedCache = { platform, set };
+};
+
+/** Test-only: clear the process-lifetime verified cache. */
+export const setVerifiedWindowsNativeAuthorityForTest = (
+  value:
+    | {
+        readonly platform: NodeJS.Platform;
+        readonly set: WindowsNativeCapabilitySet;
+      }
+    | undefined,
+): void => {
+  verifiedCache = value;
+};
+
+/** The verified control set when present, otherwise the unproven stub. */
+export const verifiedWindowsNativeCapabilities = (
+  platform: NodeJS.Platform,
+): WindowsNativeCapabilitySet => {
+  if (platform !== "win32") return windowsNativeCapabilities(platform);
+  return verifiedCache !== undefined && verifiedCache.platform === "win32"
+    ? verifiedCache.set
+    : windowsNativeCapabilities(platform);
+};

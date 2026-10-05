@@ -6,3 +6,6 @@ package-lock.json
 
 # Local reference sources and analysis artifacts
 /_reference/
+
+# Windows authority helper (C# source, not prettier targets)
+bridge/windows/

@@ -15,6 +15,11 @@ import {
   type SpawnedOwnedProviderProcess,
   spawnOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
+import {
+  admitReparseSafePaths,
+  applyPrivateRuntimeDacl,
+  ensureWindowsNativeAuthorityHelper,
+} from "../process/WindowsNativeAuthority.js";
 import { ghidraJavaEnvironment } from "./GhidraInstallation.js";
 import type { GhidraTransportKind } from "./GhidraTransport.js";
 
@@ -65,6 +70,64 @@ export interface GhidraHeadlessLauncherOptions {
   readonly dosMz?: true;
 }
 
+/** Record the owned-process manifest for one launched provider run. */
+const persistOwnershipRecord = (options: {
+  readonly paths: ReturnType<typeof ghidraRuntimePaths>;
+  readonly started: SpawnedOwnedProviderProcess;
+  readonly session: GhidraLaunchSession;
+  readonly launcherPath: string;
+  readonly platform: NodeJS.Platform;
+}): Promise<unknown> =>
+  writeFileAtomic(
+    options.paths.ownershipPath,
+    `${JSON.stringify({
+      run_id: options.session.runId,
+      pid: options.started.ownership.leaderPid,
+      process_group_id: options.started.ownership.processGroupId,
+      parent_pid: process.pid,
+      ownership_kind:
+        options.started.ownership.jobSpawned === true
+          ? "windows-job-object"
+          : options.platform === "win32"
+            ? "windows-process-tree-p0"
+            : "posix-process-group",
+      launcher: options.launcherPath,
+      created_at: new Date().toISOString(),
+    })}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+
+/**
+ * Windows P0 launch admission: verified private DACLs on every runtime
+ * directory (helper readback fails closed) and handle-based reparse-safe
+ * admission of every external path the child will open, before any process
+ * starts. No-op on other platforms or when the helper is absent.
+ */
+const applyWindowsLaunchAuthority = async (
+  paths: ReturnType<typeof ghidraRuntimePaths>,
+  options: GhidraHeadlessLauncherOptions,
+  session: GhidraLaunchSession,
+  platform: NodeJS.Platform,
+): Promise<void> => {
+  if (platform !== "win32") return;
+  if ((await ensureWindowsNativeAuthorityHelper()) === null) return;
+  await Promise.all(
+    [
+      paths.projectRoot,
+      paths.homeRoot,
+      paths.tempRoot,
+      paths.cacheRoot,
+      paths.configRoot,
+      paths.dataRoot,
+    ].map((path) => applyPrivateRuntimeDacl(path)),
+  );
+  await admitReparseSafePaths([
+    options.analyzeHeadlessPath,
+    options.bridgeScriptPath,
+    session.targetPath,
+  ]);
+};
+
 /** Launch Ghidra without copying scripts into or modifying its installation. */
 export class GhidraHeadlessLauncher implements GhidraLauncher {
   constructor(readonly options: GhidraHeadlessLauncherOptions) {}
@@ -78,6 +141,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
     const paths = ghidraRuntimePaths(session.runtimeRoot);
     const platform = this.options.platform ?? process.platform;
     let started: SpawnedOwnedProviderProcess | undefined;
+    const windowsAuthority =
+      platform === "win32" &&
+      (await ensureWindowsNativeAuthorityHelper()) !== null;
     try {
       await Promise.all(
         [
@@ -89,6 +155,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           paths.dataRoot,
         ].map((path) => mkdir(path, { recursive: true, mode: 0o700 })),
       );
+      await applyWindowsLaunchAuthority(paths, this.options, session, platform);
       await writeFileAtomic(
         paths.descriptorPath,
         `${JSON.stringify({
@@ -102,6 +169,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         })}\n`,
         { encoding: "utf8", mode: 0o600 },
       );
+      if (windowsAuthority) await applyPrivateRuntimeDacl(paths.descriptorPath);
       if (isAborted(options.signal))
         return err(new AnalysisCancelledError("open_binary"));
       const headlessArguments = ghidraHeadlessArguments({
@@ -133,22 +201,13 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         windowsVerbatimArguments: platform === "win32",
         env: ghidraLaunchEnvironment(paths, this.options.javaHome, platform),
       });
-      await writeFileAtomic(
-        paths.ownershipPath,
-        `${JSON.stringify({
-          run_id: session.runId,
-          pid: started.ownership.leaderPid,
-          process_group_id: started.ownership.processGroupId,
-          parent_pid: process.pid,
-          ownership_kind:
-            platform === "win32"
-              ? "windows-process-tree-p0"
-              : "posix-process-group",
-          launcher: this.options.analyzeHeadlessPath,
-          created_at: new Date().toISOString(),
-        })}\n`,
-        { encoding: "utf8", mode: 0o600 },
-      );
+      await persistOwnershipRecord({
+        paths,
+        started,
+        session,
+        launcherPath: this.options.analyzeHeadlessPath,
+        platform,
+      });
       if (isAborted(options.signal)) {
         await cleanupStartedProcess(started, platform);
         return err(new AnalysisCancelledError("open_binary"));
@@ -312,10 +371,10 @@ const ghidraLaunchEnvironment = (
   javaHome: string | undefined,
   platform: NodeJS.Platform,
 ): NodeJS.ProcessEnv => {
-  const javaOptions =
-    platform === "win32"
-      ? `"-Duser.home=${paths.homeRoot}" "-Djava.io.tmpdir=${paths.tempRoot}"`
-      : `-Duser.home=${paths.homeRoot} -Djava.io.tmpdir=${paths.tempRoot}`;
+  // analyzeHeadless.bat expands this variable unquoted, so embedded quote
+  // pairs break the batch parser ("The syntax of the command is incorrect.");
+  // the unquoted form is the only batch-safe spelling on every platform.
+  const javaOptions = `-Duser.home=${paths.homeRoot} -Djava.io.tmpdir=${paths.tempRoot}`;
   return {
     ...ghidraJavaEnvironment(javaHome, process.env, platform),
     HOME: paths.homeRoot,

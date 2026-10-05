@@ -23,6 +23,11 @@ export interface OwnedProcessGroup {
   readonly expectedParentPid?: number;
   /** Scan all live processes for this run token during cleanup. */
   readonly sweepTokenOwnedProcesses?: boolean;
+  /**
+   * Windows: the leader is the native authority helper holding the only
+   * kill-on-close Job Object handle; terminating it terminates the tree.
+   */
+  readonly jobSpawned?: boolean;
 }
 
 /** One entry from an operating-system process-table snapshot. */

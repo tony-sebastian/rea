@@ -172,3 +172,21 @@ export const WINDOWS_P0_CAPABILITIES: readonly CapabilityDescriptor[] =
       }),
     ),
   );
+
+/**
+ * Capabilities advertised once the native authority has been verified in this
+ * process: the full read-only operation set with the Windows P0 limitations
+ * attached, and none of the unavailable markers.
+ */
+export const WINDOWS_P0_VERIFIED_CAPABILITIES: readonly CapabilityDescriptor[] =
+  Object.freeze(
+    CAPABILITIES.map((capability) =>
+      Object.freeze({
+        ...capability,
+        limitations: Object.freeze([
+          ...capability.limitations,
+          ...windowsP0Limitations,
+        ]),
+      }),
+    ),
+  );

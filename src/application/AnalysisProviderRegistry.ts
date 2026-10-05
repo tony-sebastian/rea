@@ -12,6 +12,7 @@ import {
   type ProviderSelectionRejection,
 } from "../domain/errors.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ensureWindowsNativeAuthority } from "../process/WindowsNativeAuthority.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {
   AnalysisProviderCandidate,
@@ -155,6 +156,9 @@ export class AnalysisProviderRegistry {
   > {
     if (signalIsAborted(options.signal))
       return err(new AnalysisCancelledError("open_binary"));
+    // Windows P0: verify the native authority before candidate inspection so
+    // availability reflects demonstrated OS controls, not the unproven stub.
+    await ensureWindowsNativeAuthority();
     const parsedRequest =
       requestedSelector === undefined
         ? undefined

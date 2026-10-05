@@ -1,9 +1,17 @@
 # Windows Ghidra P0
 
-Status: experimental and currently unavailable. The production adapter reports
-`unsupported_host` because verified Job Object process ownership, private
-runtime DACLs, and reparse-safe path admission are not implemented. Installation
-paths or manual MCP registration do not enable operations.
+Status: experimental; native authority implemented behind the `rea-winauth`
+helper (draft implementation, 2026-10). The helper ships as C# source
+(`bridge/windows/ReaWindowsAuthority.cs`), is compiled on first use by the
+Windows system compiler (csc.exe), and the cached binary is pinned to the
+source digest. The provider admits operations only after the helper proves
+all three controls in-process via its `capabilities` self-test (job
+membership readback, security-descriptor readback, handle-based reparse
+rejection including a positive junction test). Without a verified helper the
+adapter reports `unsupported_host` exactly as before. The trusted
+packaging/signing boundary for the helper (#287), the DACL-protected named
+pipe IPC alternative, and independent acceptance for hostile targets remain
+open and are tracked upstream.
 
 This guide describes the intended P0 boundary and adapter mechanisms. It does
 not establish general Windows REA support. Even after the required controls

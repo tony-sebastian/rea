@@ -1,12 +1,45 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { parseConfig } from "../config.js";
 import { silentLogger } from "../logger.js";
 import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryValues.js";
 import { GhidraProvider } from "./GhidraProvider.js";
+import {
+  setVerifiedWindowsNativeAuthority,
+  setVerifiedWindowsNativeAuthorityForTest,
+} from "../process/WindowsAuthority.js";
+
+const provenSet = () => ({
+  job_object_process_ownership: {
+    available: true as const,
+    reason: null,
+    proof: "native-authority" as const,
+  },
+  private_runtime_dacl: {
+    available: true as const,
+    reason: null,
+    proof: "native-authority" as const,
+  },
+  reparse_safe_path_admission: {
+    available: true as const,
+    reason: null,
+    proof: "native-authority" as const,
+  },
+});
 
 describe("Ghidra provider capabilities", () => {
+  beforeEach(() => {
+    // On Windows the operation set is only admitted once the native
+    // authority has verified in this process; publish that state so the
+    // capability contract below is testable on every platform.
+    if (process.platform === "win32")
+      setVerifiedWindowsNativeAuthority("win32", provenSet());
+  });
+  afterEach(() => {
+    setVerifiedWindowsNativeAuthorityForTest(undefined);
+  });
+
   it("publishes only admitted read-only operations and resists caller mutation", () => {
     const config = parseConfig({});
     expect(config.ok).toBe(true);

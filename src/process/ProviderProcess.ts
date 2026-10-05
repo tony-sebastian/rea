@@ -5,6 +5,7 @@ import type {
   OwnedProcessGroup,
   ProcessCleanupResult,
 } from "./ProcessOwnership.js";
+import { ensureWindowsNativeAuthorityHelper } from "./WindowsNativeAuthority.js";
 
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 1_000;
@@ -104,6 +105,13 @@ export type ProviderProcessStopResult =
 /**
  * Spawn a provider in a dedicated POSIX process group with an ownership token.
  *
+ * On Windows the launch is routed through the native authority helper, which
+ * creates a kill-on-close Job Object and assigns the child between
+ * CREATE_SUSPENDED and ResumeThread. The helper process itself becomes the
+ * supervised leader: it holds the only job handle, so terminating it (or its
+ * death for any reason) makes the kernel terminate the entire job tree —
+ * the Windows analog of the POSIX process-group ownership above.
+ *
  * The caller remains responsible for persisting any ownership manifest and for
  * selecting provider-specific command arguments or environment values.
  */
@@ -112,19 +120,33 @@ export const spawnOwnedProviderProcess = async (
 ): Promise<SpawnedOwnedProviderProcess> => {
   const platform = options.platform ?? process.platform;
   const hostEnvironment = options.hostEnvironment ?? process.env;
-  const child = spawn(options.command, [...options.arguments], {
-    shell: false,
-    windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: platform !== "win32",
-    windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
-    env: {
-      ...hostEnvironment,
-      ...options.env,
-      REA_PROCESS_RUN_ID: options.runId,
+  const helper =
+    platform === "win32" ? await ensureWindowsNativeAuthorityHelper() : null;
+  const child = spawn(
+    helper !== null ? helper : options.command,
+    helper !== null
+      ? [
+          "spawn",
+          "--argv-json",
+          JSON.stringify([options.command, ...options.arguments]),
+          ...(options.windowsVerbatimArguments ? ["--verbatim-last"] : []),
+        ]
+      : [...options.arguments],
+    {
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: platform !== "win32",
+      windowsVerbatimArguments:
+        helper !== null ? false : (options.windowsVerbatimArguments ?? false),
+      env: {
+        ...hostEnvironment,
+        ...options.env,
+        REA_PROCESS_RUN_ID: options.runId,
+      },
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
     },
-    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-  });
+  );
   await waitForSpawn(child);
   const pid = child.pid;
   if (pid === undefined) throw new Error("Provider launcher has no process ID");
@@ -133,6 +155,7 @@ export const spawnOwnedProviderProcess = async (
     leaderPid: pid,
     processGroupId: pid,
     expectedParentPid: process.pid,
+    ...(helper !== null ? { jobSpawned: true } : {}),
     ...(options.expectedCommand === null
       ? {}
       : { expectedCommand: options.expectedCommand ?? options.command }),

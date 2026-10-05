@@ -223,9 +223,10 @@ decompilation, assembly, resolved calls, typed references, xrefs, function
 dossiers, instructions, and recovered data types. GUI controls and annotation
 changes require Hopper.
 
-Windows Ghidra operations are currently unavailable. The adapter reports
-`unsupported_host` until verified Job Object process ownership, private runtime
-DACLs, and reparse-safe path admission are implemented. The
+Windows Ghidra operations are admitted only after the native authority helper
+(`rea-winauth`) proves Job Object process ownership, private runtime DACLs, and
+reparse-safe path admission in-process; without a verified helper the adapter
+reports `unsupported_host`. The
 [Windows Ghidra P0 guide](windows-ghidra-p0.md) describes the intended boundary
 and remaining controls.
 
@@ -252,7 +253,8 @@ REA skill after approval. Direct registrations use Node to launch REA's entry
 script; package-runner registrations use the pinned `npx` command. Hopper
 installation remains unavailable on Windows. Setup never installs Ghidra,
 Java, or Python, and agent registration does not enable blocked Ghidra
-operations. See [Windows Ghidra P0](windows-ghidra-p0.md) for provider diagnostics.
+operations: the native authority helper must verify the host first. See
+[Windows Ghidra P0](windows-ghidra-p0.md) for provider diagnostics.
 
 Doctor validates the platform, architecture, application version,
 `support/analyzeHeadless` or `support/analyzeHeadless.bat`, Java
@@ -267,8 +269,10 @@ home/cache/config/temp paths. REA passes `-readOnly`, `-deleteProject`, uses
 Ghidra's default analysis and resource settings, and loads its packaged Java
 bridge via `-scriptPath`; it never opens an existing user project. Linux and
 macOS use a current-user-only local bridge socket and descriptor. The
-experimental Windows transport uses authenticated IPv4 loopback, but missing
-native ownership and path controls keep Windows operations unavailable.
+experimental Windows transport uses authenticated IPv4 loopback; Windows
+operations are admitted only after the native authority helper verifies
+Job Object ownership, private runtime DACLs, and reparse-safe path
+admission on the host.
 
 Operations begin only after default auto-analysis completes. The provider
 startup deadline fails the open rather than exposing partial analysis. One

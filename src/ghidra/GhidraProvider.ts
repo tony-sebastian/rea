@@ -51,6 +51,7 @@ import type { GhidraSessionError } from "./GhidraSessionError.js";
 import {
   CAPABILITIES,
   WINDOWS_P0_CAPABILITIES,
+  WINDOWS_P0_VERIFIED_CAPABILITIES,
   GHIDRA_PROVIDER_IDENTITY,
   GHIDRA_PROVIDER_TOOL_CONTRACTS,
   healthLimitations,
@@ -60,7 +61,7 @@ import {
 import {
   WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
   hasWindowsNativeAuthority,
-  windowsNativeCapabilities,
+  verifiedWindowsNativeCapabilities,
 } from "../process/WindowsAuthority.js";
 
 export { GHIDRA_PROVIDER_IDENTITY, GHIDRA_PROVIDER_TOOL_CONTRACTS };
@@ -90,9 +91,14 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   }
 
   capabilities(): readonly CapabilityDescriptor[] {
-    return (this.installationHost?.platform ?? process.platform) === "win32"
-      ? WINDOWS_P0_CAPABILITIES
-      : CAPABILITIES;
+    const platform = this.installationHost?.platform ?? process.platform;
+    if (platform !== "win32") return CAPABILITIES;
+    // Static unavailable descriptors until the native authority verifies in
+    // this process; verified sessions advertise the full read-only set with
+    // the Windows P0 limitations attached.
+    return hasWindowsNativeAuthority(platform)
+      ? WINDOWS_P0_VERIFIED_CAPABILITIES
+      : WINDOWS_P0_CAPABILITIES;
   }
 
   inspectAvailability(): ProviderAvailability {
@@ -110,7 +116,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         diagnostics: {
           ...diagnostics,
           windows_security: jsonObjectSchema.parse(
-            windowsNativeCapabilities(installation.platform),
+            verifiedWindowsNativeCapabilities(installation.platform),
           ),
         },
       };

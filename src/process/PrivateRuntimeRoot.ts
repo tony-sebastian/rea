@@ -3,9 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  windowsNativeCapabilities,
+  verifiedWindowsNativeCapabilities,
   type WindowsNativeCapability,
 } from "./WindowsAuthority.js";
+import {
+  applyPrivateRuntimeDacl,
+  ensureWindowsNativeAuthority,
+} from "./WindowsNativeAuthority.js";
 
 /** Filesystem coordinates for one provider-owned private runtime directory. */
 export interface PrivateRuntimeRootOptions {
@@ -29,7 +33,7 @@ export const privateRuntimeRootCapability = (
   platform: NodeJS.Platform = process.platform,
 ): PrivateRuntimeRootCapability =>
   platform === "win32"
-    ? windowsNativeCapabilities(platform).private_runtime_dacl
+    ? verifiedWindowsNativeCapabilities(platform).private_runtime_dacl
     : { available: true, reason: null, proof: "posix-mode-0700" };
 
 /** Expected failure when a runtime root's privacy boundary is unavailable. */
@@ -59,6 +63,7 @@ export class PrivateRuntimeRoot {
     options: PrivateRuntimeRootOptions = {},
   ): Promise<PrivateRuntimeRoot> {
     const platform = options.platform ?? process.platform;
+    if (platform === "win32") await ensureWindowsNativeAuthority(platform);
     const capability = privateRuntimeRootCapability(platform);
     if (!capability.available)
       throw new PrivateRuntimeRootUnavailableError(capability.reason);
@@ -66,7 +71,11 @@ export class PrivateRuntimeRoot {
       join(options.parent ?? tmpdir(), options.prefix ?? "rea-provider-"),
     );
     try {
-      await chmod(path, 0o700);
+      // POSIX: mode-0700 privacy. Windows: the helper writes a private
+      // current-user-only DACL and verifies it by security-descriptor
+      // readback; failure here fails closed instead of leaving a shared root.
+      if (platform === "win32") await applyPrivateRuntimeDacl(path);
+      else await chmod(path, 0o700);
       return new PrivateRuntimeRoot(path);
     } catch (cause: unknown) {
       await rm(path, { recursive: true, force: true });
